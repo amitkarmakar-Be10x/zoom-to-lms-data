@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zoom to LMS converter</title>
+<style>
+:root{
+  --abyss:#031019; --deep:#06222d; --shell:#e8472f; --pulse:#4fe6ff; --foam:#e9fbff; --mute:#7fa6b3;
+  --panel:rgba(4,20,29,.78); --line:rgba(79,230,255,.28);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--abyss);color:var(--foam);
+  font-family:"Avenir Next","Segoe UI",system-ui,sans-serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+canvas.drag{cursor:grabbing}
+.panel{position:fixed;left:max(20px,env(safe-area-inset-left));bottom:max(20px,env(safe-area-inset-bottom));
+  width:min(400px,calc(100vw - 40px));max-height:calc(100% - 40px);overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+h1{font-size:22px;line-height:1.15;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+.sub{margin:0 0 16px;color:var(--mute);font-size:14px;line-height:1.45}
+.drop{display:block;border:1.5px dashed var(--line);border-radius:10px;padding:18px 14px;text-align:center;
+  cursor:pointer;transition:border-color .15s,background .15s;font-size:14px}
+.drop:hover,.drop:focus-within,.drop.over{border-color:var(--pulse);background:rgba(79,230,255,.07)}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+.drop b{display:block;font-size:15px;margin-bottom:2px}
+.drop span{color:var(--mute)}
+.info{margin-top:14px;font-size:13px;color:var(--mute);line-height:1.5}
+.info strong{color:var(--foam);font-weight:600}
+.err{margin-top:14px;font-size:13px;color:#ffb0a3;line-height:1.45}
+.map{margin:12px 0 0;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.04);font-size:12px;color:var(--mute);line-height:1.6}
+.map code{color:var(--foam);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
+.prev{margin-top:12px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:11.5px;white-space:nowrap}
+th,td{padding:5px 8px;text-align:left;border-bottom:1px solid rgba(79,230,255,.12);max-width:150px;overflow:hidden;text-overflow:ellipsis}
+th{color:var(--pulse);font-weight:600;position:sticky;top:0;background:#062230}
+tr:last-child td{border-bottom:0}
+button.go{margin-top:14px;width:100%;padding:13px;border:0;border-radius:10px;font:inherit;font-weight:700;font-size:15px;
+  color:#04141c;background:var(--pulse);cursor:pointer;transition:transform .12s,box-shadow .2s}
+button.go:hover{box-shadow:0 0 22px rgba(79,230,255,.55)}
+button.go:active{transform:scale(.98)}
+button.go:focus-visible,.drop:focus-within{outline:2px solid var(--foam);outline-offset:2px}
+button.go[hidden],.info[hidden],.err[hidden],.map[hidden],.prev[hidden]{display:none}
+.fps{position:fixed;top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));
+  font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--pulse);background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:5px 9px}
+.hint{position:fixed;top:max(14px,env(safe-area-inset-top));left:max(20px,env(safe-area-inset-left));font-size:12px;color:var(--mute)}
+@media (max-width:700px){
+  .panel{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:58%}
+  .hint{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Animated 3D Milky Way spiral galaxy. Drag to spin and tilt, scroll to zoom."></canvas>
+<div class="hint">Drag to spin and tilt the galaxy, scroll to zoom</div>
+<div class="fps" id="fps">-- fps</div>
+
+<main class="panel">
+  <h1>Zoom file in, LMS file out</h1>
+  <p class="sub">Drop your OM Zoom CSV. The LMS version is built in your browser and nothing is uploaded.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".csv,text/csv">
+    <b id="dropTitle">Choose the Zoom CSV</b>
+    <span id="dropSub">or drag it onto this box</span>
+  </label>
+
+  <div class="err" id="err" role="alert" hidden></div>
+  <div class="info" id="info" hidden></div>
+  <div class="map" id="map" hidden>
+    <code>country_code</code> from <code>CountryCode</code><br>
+    <code>number_without_country_code</code> and <code>phone_number</code> from <code>Phone</code><br>
+    <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
+    <code>lead_value</code> from <code>msg2</code>, <code>oto_non_oto</code> from <code>msg3</code>
+  </div>
+  <div class="prev" id="prev" hidden></div>
+  <button class="go" id="go" hidden>Download LMS file</button>
+</main>
+
+<script>
+/* ================= CSV -> LMS ================= */
+const MAP = [ // [lms column, source column]
+  ['country_code','CountryCode'],
+  ['number_without_country_code','Phone'],
+  ['phone_number','Phone'],
+  ['email','emailid'],
+  ['video','session'],
+  ['lead_value','msg2'],
+  ['oto_non_oto','msg3']
+];
+let outRows = null, outName = 'lms_output.csv';
+
+function parseCSV(text){
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  const rows=[]; let row=[], f='', q=false, i=0, n=text.length;
+  while(i<n){
+    const ch=text[i];
+    if(q){
+      if(ch==='"'){ if(text[i+1]==='"'){f+='"';i+=2;continue;} q=false;i++;continue; }
+      f+=ch;i++;continue;
+    }
+    if(ch==='"'){q=true;i++;}
+    else if(ch===','){row.push(f);f='';i++;}
+    else if(ch==='\r'||ch==='\n'){
+      row.push(f);f='';rows.push(row);row=[];
+      if(ch==='\r'&&text[i+1]==='\n')i++;
+      i++;
+    } else {f+=ch;i++;}
+  }
+  if(f!==''||row.length){row.push(f);rows.push(row);}
+  return rows.filter(r=>!(r.length===1&&r[0]===''));
+}
+const esc = v => /[",\r\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+
+function convert(text){
+  const rows=parseCSV(text);
+  if(!rows.length) throw new Error('The file is empty.');
+  const head=rows[0].map(h=>h.trim().toLowerCase());
+  const idx={}, missing=[];
+  MAP.forEach(([,src])=>{
+    if(idx[src]!==undefined) return;
+    const k=head.indexOf(src.toLowerCase());
+    if(k<0) missing.push(src); else idx[src]=k;
+  });
+  if(missing.length) throw new Error('This does not look like the Zoom file. Missing column'+(missing.length>1?'s':'')+': '+missing.join(', ')+'.');
+  const out=[MAP.map(m=>m[0])];
+  for(let r=1;r<rows.length;r++) out.push(MAP.map(([,src])=>rows[r][idx[src]]??''));
+  return out;
+}
+function toCSV(rows){ return rows.map(r=>r.map(esc).join(',')).join('\r\n')+'\r\n'; }
+
+const $=id=>document.getElementById(id);
+const el={drop:$('drop'),file:$('file'),err:$('err'),info:$('info'),map:$('map'),prev:$('prev'),go:$('go'),title:$('dropTitle'),sub:$('dropSub')};
+
+function showError(msg){
+  outRows=null; el.err.textContent=msg; el.err.hidden=false;
+  ['info','map','prev','go'].forEach(k=>el[k].hidden=true);
+}
+function handleFile(file){
+  if(!file) return;
+  el.err.hidden=true;
+  const rd=new FileReader();
+  rd.onerror=()=>showError('The file could not be read. Try choosing it again.');
+  rd.onload=()=>{
+    try{
+      const rows=convert(String(rd.result));
+      outRows=rows; outName='lms_'+file.name.replace(/^lms_/i,'');
+      el.title.textContent=file.name; el.sub.textContent='Choose a different file';
+      const n=rows.length-1;
+      el.info.innerHTML='<strong>'+n.toLocaleString()+' rows</strong> converted to <strong>'+rows[0].length+' columns</strong>. Saves as <strong>'+outName.replace(/</g,'&lt;')+'</strong>';
+      const t=document.createElement('table');
+      const hd=document.createElement('tr');
+      rows[0].forEach(h=>{const th=document.createElement('th');th.textContent=h;hd.appendChild(th)});
+      t.appendChild(hd);
+      rows.slice(1,4).forEach(r=>{const tr=document.createElement('tr');r.forEach(c=>{const td=document.createElement('td');td.textContent=c;td.title=c;tr.appendChild(td)});t.appendChild(tr)});
+      el.prev.replaceChildren(t);
+      ['info','map','prev','go'].forEach(k=>el[k].hidden=false);
+      mood.boost=2.2; // crab gets excited
+    }catch(e){ showError(e.message); }
+  };
+  rd.readAsText(file,'utf-8');
+}
+el.file.addEventListener('change',e=>{handleFile(e.target.files[0]);e.target.value='';});
+['dragenter','dragover'].forEach(ev=>el.drop.addEventListener(ev,e=>{e.preventDefault();el.drop.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>el.drop.addEventListener(ev,e=>{e.preventDefault();el.drop.classList.remove('over')}));
+el.drop.addEventListener('drop',e=>handleFile(e.dataTransfer.files[0]));
+window.addEventListener('dragover',e=>e.preventDefault());
+window.addEventListener('drop',e=>{e.preventDefault(); if(!el.drop.contains(e.target)) handleFile(e.dataTransfer.files[0]);});
+el.go.addEventListener('click',()=>{
+  if(!outRows) return;
+  const blob=new Blob([toCSV(outRows)],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=outName;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  mood.boost=3;
+});
+
+/* ================= 3D Milky Way engine ================= */
+const cv=$('c'), ctx=cv.getContext('2d');
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const mood={boost:0}; // decays; spins the galaxy faster and brightens the core
+let W=0,H=0,DPR=1;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;}
+addEventListener('resize',resize); resize();
+
+/* seeded random so the galaxy looks the same every load */
+function mulberry(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rnd=mulberry(20261121);
+const gauss=()=>{let u=0;while(!u)u=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(6.2832*rnd());};
+
+/* star colours: ember, gold, white, ice, blue, HII pink */
+const COL=[[255,150,95],[255,214,150],[255,246,236],[190,214,255],[145,182,255],[255,140,200]];
+const RMAX=3.4, WIND=3.27, D=8;
+const raw=[];
+const put=(r,th,z,cls,size,A)=>raw.push({r,th,z,cls,size,A,w:.5+rnd()*1.5,ph:rnd()*6.283});
+
+// central bulge + rotated bar (rigid, A=0 so the bar keeps its shape)
+for(let i=0;i<4600;i++){
+  let x,y,z;
+  if(rnd()<.5){const bx=gauss()*.8,by=gauss()*.25,c=Math.cos(.5),s=Math.sin(.5);x=bx*c-by*s;y=bx*s+by*c;z=gauss()*.16;}
+  else{x=gauss()*.42;y=gauss()*.42;z=gauss()*.3;}
+  const u=rnd();
+  put(Math.hypot(x,y),Math.atan2(y,x),z,u<.3?0:u<.78?1:2,.8+Math.pow(rnd(),7)*1.8,0);
+}
+// faint stellar halo
+for(let i=0;i<700;i++){
+  let x=gauss(),y=gauss(),z=gauss();const l=Math.hypot(x,y,z)||1,R=.8+Math.abs(gauss())*1.5;
+  x=x/l*R;y=y/l*R;z=z/l*R;
+  put(Math.hypot(x,y),Math.atan2(y,x),z,rnd()<.6?0:1,.7,0);
+}
+// exponential disk with four logarithmic spiral arms
+const HS=1.15, NORM=1-Math.exp(-RMAX/HS);
+for(let i=0;i<9800;i++){
+  const r=Math.min(RMAX*1.03,.3-HS*Math.log(1-rnd()*NORM));
+  const inArm=rnd()<.72; let th,cls;
+  if(inArm){
+    const u=rnd()*3.1, arm=u<1?0:u<1.55?1:u<2.55?2:3;
+    th=arm*1.5708+Math.log(r/.35)*WIND+gauss()*(.12+.05*r);
+    const v=rnd(); cls=v<.4?3:v<.65?4:v<.85?2:v<.92?5:1;
+  } else {
+    th=rnd()*6.283; const v=rnd(); cls=v<.5?1:v<.85?2:0;
+  }
+  const z=gauss()*(.035+.02*r)+.1*Math.pow(r/RMAX,2.2)*Math.sin(th);
+  put(r,th,z,cls,.7+Math.pow(rnd(),8)*(inArm?3:1.8),.1+.05*r);
+}
+raw.sort((a,b)=>a.cls-b.cls);
+const NS=raw.length, SR=new Float32Array(NS),STH=new Float32Array(NS),SZ=new Float32Array(NS),
+  SS=new Float32Array(NS),SA=new Float32Array(NS),SW=new Float32Array(NS),SPH=new Float32Array(NS),
+  PX=new Float32Array(NS),PY=new Float32Array(NS),PK=new Float32Array(NS),CS=new Int32Array(7),BR=[];
+raw.forEach((s,i)=>{SR[i]=s.r;STH[i]=s.th;SZ[i]=s.z;SS[i]=s.size;SA[i]=s.A;SW[i]=s.w;SPH[i]=s.ph;
+  CS[s.cls+1]=i+1; if(s.size>2.1)BR.push(i);});
+for(let c=1;c<7;c++) if(CS[c]<CS[c-1]) CS[c]=CS[c-1];
+const CLS=[]; { let a=0; for(let i=0;i<NS;i++){CLS[i]=0;} raw.forEach((s,i)=>CLS[i]=s.cls); }
+raw.length=0;
+
+function glowSprite(rgb,S,core){
+  const c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d');
+  const gr=g.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+  gr.addColorStop(0,`rgba(255,255,255,${core})`);gr.addColorStop(.18,`rgba(${rgb},.55)`);
+  gr.addColorStop(.5,`rgba(${rgb},.12)`);gr.addColorStop(1,`rgba(${rgb},0)`);
+  g.fillStyle=gr;g.fillRect(0,0,S,S);return c;
+}
+const GL=COL.map(c=>glowSprite(c.join(','),48,.95));
+const HII=glowSprite('255,90,170',64,.5);
+const DUST=(()=>{const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');
+  const gr=g.createRadialGradient(32,32,0,32,32,32);gr.addColorStop(0,'rgba(18,7,9,.9)');gr.addColorStop(.6,'rgba(18,7,9,.35)');gr.addColorStop(1,'rgba(18,7,9,0)');
+  g.fillStyle=gr;g.fillRect(0,0,64,64);return c;})();
+
+// dust lanes (inner edge of arms) and pink star-forming knots
+const dust=[],knots=[];
+for(let i=0;i<340;i++){const r=.55+rnd()*2.6,arm=(rnd()*4|0);
+  dust.push({r,th:arm*1.5708+Math.log(r/.35)*WIND-.2+gauss()*.05,z:gauss()*.02,s:.1+rnd()*.22});}
+for(let i=0;i<150;i++){const r=.8+rnd()*2.4,arm=(rnd()*4|0);
+  knots.push({r,th:arm*1.5708+Math.log(r/.35)*WIND+gauss()*.06,z:gauss()*.015,s:.08+rnd()*.2});}
+
+// deep space
+const bgStars=[];for(let i=0;i<420;i++)bgStars.push({x:rnd(),y:rnd(),s:rnd()*1.1+.3,p:rnd()*6.28,v:.6+rnd()*2});
+const neb=[[.2,.25,.5,'90,60,180',.07],[.85,.8,.55,'40,90,170',.06],[.7,.15,.4,'150,50,120',.045],[.1,.85,.45,'50,110,150',.05]];
+let shoot=null,nextShoot=4;
+
+let T=0,pat=0,pitch=.98,zoom=1,dragging=false,spinV=0,Q=1,F=900,CX=0,CY=0;
+
+function updateSim(dt){
+  T+=dt; mood.boost=Math.max(0,mood.boost-dt*.5);
+  const sp=(reduce?.02:.07)*(1+Math.min(3,mood.boost)*3)+(outRows?.02:0);
+  pat+=dt*sp+spinV; spinV*=.95;
+  if(!reduce&&!shoot&&T>nextShoot){shoot={x:rnd()*W*.8,y:rnd()*H*.4,vx:(.5+rnd())*900,vy:(.3+rnd()*.4)*500,life:0};}
+  if(shoot){shoot.life+=dt;shoot.x+=shoot.vx*dt;shoot.y+=shoot.vy*dt;if(shoot.life>.7){shoot=null;nextShoot=T+6+rnd()*8;}}
+}
+
+function drawFrame(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.globalCompositeOperation='source-over';
+  const bg=ctx.createRadialGradient(W*.5,H*.5,0,W*.5,H*.5,Math.max(W,H)*.75);
+  bg.addColorStop(0,'#070b1c');bg.addColorStop(1,'#010207');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+  for(const [x,y,r,c,a] of neb){const R=r*Math.max(W,H),g=ctx.createRadialGradient(x*W,y*H,0,x*W,y*H,R);
+    g.addColorStop(0,`rgba(${c},${a})`);g.addColorStop(1,`rgba(${c},0)`);ctx.fillStyle=g;ctx.fillRect(x*W-R,y*H-R,R*2,R*2);}
+  for(const s of bgStars){ctx.fillStyle=`rgba(220,230,255,${.25+.35*Math.sin(T*s.v+s.p)*.5+.15})`;ctx.fillRect(s.x*W,s.y*H,s.s,s.s);}
+  if(shoot){const g=ctx.createLinearGradient(shoot.x,shoot.y,shoot.x-shoot.vx*.12,shoot.y-shoot.vy*.12);
+    g.addColorStop(0,`rgba(255,255,255,${1-shoot.life/.7})`);g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.strokeStyle=g;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(shoot.x,shoot.y);ctx.lineTo(shoot.x-shoot.vx*.12,shoot.y-shoot.vy*.12);ctx.stroke();}
+
+  const narrow=W<700;
+  F=Math.min(W*(narrow?1.15:.8),H*1.05)*zoom; CX=narrow?W/2:W*.63; CY=narrow?H*.28:H*.5;
+  const pp=Math.max(.12,Math.min(1.45,pitch))+Math.sin(T*.11)*.04, cp=Math.cos(pp), sp=Math.sin(pp);
+  const Rpx=RMAX*F/D, flash=Math.min(1,mood.boost);
+
+  // diffuse disk glow and core
+  ctx.save();ctx.translate(CX,CY);ctx.scale(1,.08+.92*cp);
+  let g=ctx.createRadialGradient(0,0,0,0,0,Rpx*1.05);
+  g.addColorStop(0,`rgba(255,205,140,${.34+.22*flash})`);g.addColorStop(.18,'rgba(255,170,110,.16)');
+  g.addColorStop(.55,'rgba(110,140,255,.07)');g.addColorStop(1,'rgba(80,110,255,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,Rpx*1.05,0,6.2832);ctx.fill();ctx.restore();
+
+  // star positions: pattern rotation + small epicycle wobble
+  const sc=Math.cos(pat),ss=Math.sin(pat);
+  for(let i=0;i<NS;i++){
+    const th=STH[i]+pat+(SA[i]?SA[i]*Math.sin(SW[i]*T+SPH[i]):0), r=SR[i];
+    const x=r*Math.cos(th), y=r*Math.sin(th), z=SZ[i];
+    const y2=y*cp-z*sp, z2=y*sp+z*cp, k=D/(D-z2);
+    PX[i]=CX+x*k*F/D; PY[i]=CY-y2*k*F/D; PK[i]=k;
+  }
+  const zs=Math.sqrt(zoom), q=Q, qs=q>1?Math.sqrt(q)*.9:1;
+  for(let c=0;c<6;c++){
+    const a=COL[c];ctx.fillStyle=`rgba(${a[0]},${a[1]},${a[2]},${c===0?.55:.72})`;
+    for(let i=CS[c];i<CS[c+1];i+=q){
+      const s=Math.max(.85,SS[i]*PK[i]*zs*qs);
+      ctx.fillRect(PX[i]-s*.5,PY[i]-s*.5,s,s);
+    }
+  }
+  // bright stars get a soft halo
+  for(let j=0;j<BR.length;j+=q){
+    const i=BR[j],s=SS[i]*PK[i]*zs*5;
+    ctx.drawImage(GL[CLS[i]],PX[i]-s*.5,PY[i]-s*.5,s,s);
+  }
+  // pink star-forming knots
+  for(const n of knots){
+    const th=n.th+pat,x=n.r*Math.cos(th),y=n.r*Math.sin(th),y2=y*cp-n.z*sp,z2=y*sp+n.z*cp,k=D/(D-z2);
+    const s=n.s*k*F/D*2.4;ctx.globalAlpha=.55;ctx.drawImage(HII,CX+x*k*F/D-s/2,CY-y2*k*F/D-s/2,s,s);
+  }
+  ctx.globalAlpha=1;
+  // bright core
+  const cr=Rpx*(.2+.05*flash);g=ctx.createRadialGradient(CX,CY,0,CX,CY,cr);
+  g.addColorStop(0,`rgba(255,240,215,${.75+.2*flash})`);g.addColorStop(.4,'rgba(255,200,130,.28)');g.addColorStop(1,'rgba(255,170,100,0)');
+  ctx.fillStyle=g;ctx.fillRect(CX-cr,CY-cr,cr*2,cr*2);
+
+  // dark dust lanes drawn over the starlight
+  ctx.globalCompositeOperation='source-over';ctx.globalAlpha=.1;
+  for(const d of dust){
+    const th=d.th+pat,x=d.r*Math.cos(th),y=d.r*Math.sin(th),y2=y*cp-d.z*sp,z2=y*sp+d.z*cp,k=D/(D-z2);
+    const s=d.s*k*F/D*2.6;ctx.drawImage(DUST,CX+x*k*F/D-s/2,CY-y2*k*F/D-s/2,s,s);
+  }
+  ctx.globalAlpha=1;
+}
+
+/* drag: spin + tilt, wheel / pinch: zoom */
+const ptrs=new Map();let lx=0,ly=0,pinch0=0,zoom0=1;
+cv.addEventListener('pointerdown',e=>{ptrs.set(e.pointerId,[e.clientX,e.clientY]);cv.setPointerCapture(e.pointerId);
+  dragging=true;lx=e.clientX;ly=e.clientY;spinV=0;cv.classList.add('drag');
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];pinch0=Math.hypot(a[0]-b[0],a[1]-b[1]);zoom0=zoom;}});
+cv.addEventListener('pointermove',e=>{
+  if(!ptrs.has(e.pointerId))return; ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];zoom=Math.max(.55,Math.min(3.2,zoom0*Math.hypot(a[0]-b[0],a[1]-b[1])/pinch0));return;}
+  const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;
+  pat+=dx*.006;pitch=Math.max(.12,Math.min(1.45,pitch+dy*.005));spinV=dx*.0008;
+});
+const endDrag=e=>{ptrs.delete(e.pointerId);if(!ptrs.size){dragging=false;cv.classList.remove('drag');}};
+cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+cv.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.55,Math.min(3.2,zoom*Math.exp(-e.deltaY*.0012)));},{passive:false});
+cv.addEventListener('dblclick',()=>{mood.boost=2;});
+
+/* 60 fps loop: fixed 1/60 simulation step, render capped at ~60 even on 120/144 Hz screens.
+   If a slow device drops below 50 fps, star count is thinned automatically to hold the frame rate. */
+const STEP=1000/60;let last=performance.now(),acc=0,frames=0,fpsT=last,slow=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=now-last;
+  if(dt<STEP-1.5)return;
+  last=now;acc+=Math.min(dt,100);
+  while(acc>=STEP){updateSim(STEP/1000);acc-=STEP;}
+  drawFrame();frames++;
+  if(now-fpsT>=500){
+    const f=frames*1000/(now-fpsT);$('fps').textContent=Math.round(f)+' fps';
+    slow=f<52?slow+1:0; if(slow>=3&&Q<3){Q++;slow=0;}
+    frames=0;fpsT=now;
+  }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
