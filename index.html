@@ -94,7 +94,7 @@ button.go[hidden],.info[hidden],.err[hidden],.map[hidden],.prev[hidden]{display:
     <code>country_code</code> from <code>CountryCode</code><br>
     <code>number_without_country_code</code> and <code>phone_number</code> from <code>Phone</code><br>
     <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
-    <code>lead_value</code> from <code>msg2</code>, <code>oto_non_oto</code> from <code>msg3</code>
+    <code>lead_value</code> from <code>msg2</code>, <code>oto_non_oto</code> from <code>msg3</code><br>If <code>msg2</code> or <code>msg3</code> is missing, <code>lead_value</code> becomes <code>zoomads</code> and <code>oto_non_oto</code> becomes <code>zoomid</code>
   </div>
   <div class="prev" id="prev" hidden></div>
   <button class="go" id="go" hidden>Download LMS file</button>
@@ -156,21 +156,26 @@ function parseCSV(text){
 }
 const esc = v => /[",\r\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
 
+const FALLBACK={msg2:'zoomads',msg3:'zoomid'}; // used when these columns are not in the input file
 function convert(text){
   const rows=parseCSV(text);
   if(!rows.length) throw new Error('The file is empty.');
   const head=rows[0].map(h=>h.trim().toLowerCase());
-  const idx={}, missing=[];
+  const idx={}, missing=[], filled=[];
   MAP.forEach(([,src])=>{
     if(idx[src]!==undefined) return;
     const k=head.indexOf(src.toLowerCase());
-    if(k<0) missing.push(src); else idx[src]=k;
+    if(k>=0) idx[src]=k;
+    else if(src in FALLBACK){ idx[src]=-1; filled.push(src); }
+    else missing.push(src);
   });
   if(missing.length) throw new Error('This does not look like the Zoom file. Missing column'+(missing.length>1?'s':'')+': '+missing.join(', ')+'.');
   const out=[MAP.map(m=>m[0])];
-  for(let r=1;r<rows.length;r++) out.push(MAP.map(([,src])=>rows[r][idx[src]]??''));
+  for(let r=1;r<rows.length;r++) out.push(MAP.map(([,src])=>idx[src]<0?FALLBACK[src]:(rows[r][idx[src]]??'')));
+  out.filled=filled;
   return out;
 }
+
 function toCSV(rows){ return rows.map(r=>r.map(esc).join(',')).join('\r\n')+'\r\n'; }
 
 const $=id=>document.getElementById(id);
@@ -192,6 +197,7 @@ function handleFile(file){
       el.title.textContent=file.name; el.sub.textContent='Choose a different file';
       const n=rows.length-1;
       el.info.innerHTML='<strong>'+n.toLocaleString()+' rows</strong> converted to <strong>'+rows[0].length+' columns</strong>. Saves as <strong>'+outName.replace(/</g,'&lt;')+'</strong>';
+      if(rows.filled&&rows.filled.length){const m={msg2:'lead_value = zoomads',msg3:'oto_non_oto = zoomid'};el.info.innerHTML+='<br>No '+rows.filled.join(' / ')+' column in this file, so '+rows.filled.map(c=>m[c]).join(' and ')+' was added to every row.';}
       const t=document.createElement('table');
       const hd=document.createElement('tr');
       rows[0].forEach(h=>{const th=document.createElement('th');th.textContent=h;hd.appendChild(th)});
