@@ -66,6 +66,17 @@ button.go[hidden],.info[hidden],.err[hidden],.map[hidden],.prev[hidden]{display:
   .panel{left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:auto;max-height:58%}
   .hint{display:none}
 }
+
+/* centred, full-size layout */
+.panel{left:50%;top:50%;bottom:auto;right:auto;transform:translate(-50%,-50%);width:min(780px,calc(100vw - 28px));max-height:min(92vh,920px);padding:28px 30px}
+h1{font-size:28px}.sub{font-size:15px}
+.drop{padding:36px 16px;font-size:15px}.drop b{font-size:18px}
+button.go{padding:16px;font-size:16px}
+.tabs button{padding:11px 8px;font-size:14px}
+.flist{max-height:210px}.flist li{font-size:13.5px}
+.info{font-size:14px}.map{font-size:13px}
+th,td{font-size:12.5px;max-width:220px}
+@media (max-width:700px){.panel{width:calc(100vw - 20px);max-height:94vh;padding:18px}h1{font-size:22px}.drop{padding:26px 12px}}
 </style>
 </head>
 <body>
@@ -79,25 +90,30 @@ button.go[hidden],.info[hidden],.err[hidden],.map[hidden],.prev[hidden]{display:
     <button role="tab" id="tPay" aria-selected="false">Merge payment links</button>
   </div>
   <section id="tabZoom">
-  <h1>Zoom file in, LMS file out</h1>
-  <p class="sub">Drop your OM Zoom CSV. The LMS version is built in your browser and nothing is uploaded.</p>
+  <h1>Many Zoom files, one LMS file</h1>
+  <p class="sub">Add your Zoom CSV, or several. Whatever columns it has are matched into the LMS format, and the file is saved for you. Nothing is uploaded.</p>
 
   <label class="drop" id="drop">
-    <input type="file" id="file" accept=".csv,text/csv">
-    <b id="dropTitle">Choose the Zoom CSV</b>
-    <span id="dropSub">or drag it onto this box</span>
+    <input type="file" id="file" accept=".csv,text/csv" multiple>
+    <b>Choose the Zoom files</b>
+    <span>or drag several onto this box</span>
   </label>
 
+  <ul class="flist" id="zList" hidden></ul>
+  <label class="chk" id="zChk" hidden><input type="checkbox" id="zDedupe" checked> Remove repeated phone numbers (keep the first)</label>
   <div class="err" id="err" role="alert" hidden></div>
   <div class="info" id="info" hidden></div>
   <div class="map" id="map" hidden>
-    <code>country_code</code> from <code>CountryCode</code><br>
+    <code>name</code> from <code>Name</code>, <code>country_code</code> from <code>CountryCode</code><br>
     <code>number_without_country_code</code> and <code>phone_number</code> from <code>Phone</code><br>
     <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
-    <code>lead_value</code> from <code>msg2</code>, <code>oto_non_oto</code> from <code>msg3</code><br>If <code>msg2</code> / <code>msg3</code> are missing, the <code>zoomads</code> / <code>zoomid</code> columns are used. With neither, <code>lead_value</code> becomes <code>WN_h81UmFwmQnCoQ-55QxELuQ</code> and <code>oto_non_oto</code> becomes <code>997 7254 2342</code>
+    <code>lead_value</code> from <code>zoomads</code>, <code>oto_non_oto</code> from <code>zoomid</code><br>
+    <code>platform</code> from <code>msg2</code>, <code>profession</code> from <code>msg3</code>, <code>amount</code> from <code>amount</code><br>
+    <code>order_id</code> from <code>wsdt</code>, <code>enrolled at</code> from <code>time</code><br>
+    Columns your file does not have are left blank, with no error. If <code>zoomads</code> or <code>zoomid</code> is missing, <code>WN_h81UmFwmQnCoQ-55QxELuQ</code> and <code>997 7254 2342</code> are used.
   </div>
   <div class="prev" id="prev" hidden></div>
-  <button class="go" id="go" hidden>Download LMS file</button>
+  <button class="go" id="go" hidden>Download merged LMS file</button>
   </section>
 
   <section id="tabPay" hidden>
@@ -123,15 +139,24 @@ button.go[hidden],.info[hidden],.err[hidden],.map[hidden],.prev[hidden]{display:
 
 <script>
 /* ================= CSV -> LMS ================= */
-const MAP = [ // [lms column, source column]
-  ['country_code','CountryCode'],
-  ['number_without_country_code','Phone'],
-  ['phone_number','Phone'],
-  ['email','emailid'],
-  ['video','session'],
-  ['lead_value','msg2'],
-  ['oto_non_oto','msg3']
+/* LMS column <- candidate header names in the Zoom file (first one found wins, case-insensitive).
+   Columns the file does not have are left blank; no error. lead_value / oto_non_oto use a fixed value if their columns are absent. */
+const SPEC=[
+  ['name',['name']],
+  ['country_code',['countrycode','country_code']],
+  ['number_without_country_code',['phone','number_without_country_code','phone_number']],
+  ['phone_number',['phone','phone_number','number_without_country_code']],
+  ['email',['emailid','email']],
+  ['video',['session','video']],
+  ['lead_value',['zoomads','lead_value'],'WN_h81UmFwmQnCoQ-55QxELuQ'],
+  ['oto_non_oto',['zoomid','oto_non_oto'],'997 7254 2342'],
+  ['platform',['msg2','platform']],
+  ['profession',['msg3','profession']],
+  ['amount',['amount']],
+  ['order_id',['wsdt','order_id']],
+  ['enrolled at',['time','enrolled at','enrolled_at']]
 ];
+const OUTCOLS=SPEC.map(s=>s[0]);
 let outRows = null, outName = 'lms_output.csv';
 
 function parseCSV(text){
@@ -156,70 +181,90 @@ function parseCSV(text){
 }
 const esc = v => /[",\r\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
 
-/* lead_value comes from msg2, else from a "zoomads" column, else the fixed value below.
-   oto_non_oto comes from msg3, else from a "zoomid" column, else the fixed value below. */
-const ALT={msg2:'zoomads',msg3:'zoomid'};
-const FALLBACK={msg2:'WN_h81UmFwmQnCoQ-55QxELuQ',msg3:'997 7254 2342'};
 function convert(text){
   const rows=parseCSV(text);
-  if(!rows.length) throw new Error('The file is empty.');
-  const head=rows[0].map(h=>h.trim().toLowerCase());
-  const idx={}, missing=[], notes=[];
-  MAP.forEach(([,src])=>{
-    if(idx[src]!==undefined) return;
-    let k=head.indexOf(src.toLowerCase());
-    if(k<0&&ALT[src]){ k=head.indexOf(ALT[src]); if(k>=0) notes.push('lead_value / oto_non_oto'.split(' / ')[src==='msg2'?0:1]+' taken from the '+ALT[src]+' column'); }
-    if(k>=0) idx[src]=k;
-    else if(src in FALLBACK){ idx[src]=-1; notes.push((src==='msg2'?'lead_value':'oto_non_oto')+' set to '+FALLBACK[src]+' on every row'); }
-    else missing.push(src);
+  if(!rows.length) throw new Error('empty file');
+  const head=rows[0].map(x=>x.trim().toLowerCase());
+  const idx=[],blank=[],fixed=[];let found=0;
+  SPEC.forEach(([col,cands,fb])=>{
+    let k=-1;for(const c of cands){k=head.indexOf(c);if(k>=0)break;}
+    if(k>=0){found++;idx.push(k);}
+    else if(fb!==undefined){idx.push(-1);fixed.push(col+' = '+fb);}
+    else{idx.push(-2);blank.push(col);}
   });
-  if(missing.length) throw new Error('This does not look like the Zoom file. Missing column'+(missing.length>1?'s':'')+': '+missing.join(', ')+'.');
-  const out=[MAP.map(m=>m[0])];
-  for(let r=1;r<rows.length;r++) out.push(MAP.map(([,src])=>idx[src]<0?FALLBACK[src]:(rows[r][idx[src]]??'')));
-  out.notes=notes;
+  if(!found) throw new Error('no matching columns');
+  const out=[OUTCOLS.slice()];
+  for(let r=1;r<rows.length;r++){const row=rows[r];out.push(idx.map((k,n)=>k>=0?(row[k]??''):k===-1?SPEC[n][2]:''));}
+  out.notes=[];
+  if(blank.length) out.notes.push('Not in your file, left blank: '+blank.join(', '));
+  if(fixed.length) out.notes.push('Not in your file, filled with fixed value: '+fixed.join(', '));
   return out;
 }
 
 function toCSV(rows){ return rows.map(r=>r.map(esc).join(',')).join('\r\n')+'\r\n'; }
 
 const $=id=>document.getElementById(id);
-const el={drop:$('drop'),file:$('file'),err:$('err'),info:$('info'),map:$('map'),prev:$('prev'),go:$('go'),title:$('dropTitle'),sub:$('dropSub')};
+const ZOUT_MULTI='lms_Zoom_merged.csv';
+function buildZoom(files,dedupe){
+  const PI=OUTCOLS.indexOf('phone_number'),out=[OUTCOLS.slice()],seen=new Set();let dupes=0;
+  for(const f of files){ if(!f.rows)continue;
+    for(let r=1;r<f.rows.length;r++){
+      const row=f.rows[r];
+      if(dedupe){const k=row[PI].trim();if(k){if(seen.has(k)){dupes++;continue;}seen.add(k);}}
+      out.push(row);
+    }}
+  return {rows:out,dupes};
+}
+const zFiles=[];
+const el={drop:$('drop'),file:$('file'),list:$('zList'),chk:$('zChk'),dd:$('zDedupe'),err:$('err'),info:$('info'),map:$('map'),prev:$('prev'),go:$('go')};
+const esc2=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
-function showError(msg){
-  outRows=null; el.err.textContent=msg; el.err.hidden=false;
-  ['info','map','prev','go'].forEach(k=>el[k].hidden=true);
+function renderZoom(){
+  el.list.replaceChildren();
+  zFiles.forEach((f,i)=>{
+    const li=document.createElement('li'),nm=document.createElement('span'),ct=document.createElement('span'),x=document.createElement('button');
+    nm.className='nm';nm.textContent=f.name;nm.title=f.name;
+    ct.className='ct'+(f.rows?'':' bad');ct.textContent=f.rows?(f.rows.length-1).toLocaleString()+' rows':f.error;
+    if(f.rows&&f.rows.notes&&f.rows.notes.length)ct.title=f.rows.notes.join('. ');
+    x.textContent='\u00d7';x.setAttribute('aria-label','Remove '+f.name);
+    x.onclick=()=>{zFiles.splice(i,1);renderZoom();};
+    li.append(nm,ct,x);el.list.appendChild(li);
+  });
+  const ok=zFiles.filter(f=>f.rows),has=zFiles.length>0;
+  el.list.hidden=!has;el.chk.hidden=!has;el.err.hidden=true;
+  if(!ok.length){outRows=null;['info','map','prev','go'].forEach(k=>el[k].hidden=true);return;}
+  const {rows,dupes}=buildZoom(zFiles,el.dd.checked);
+  outRows=rows;outName=ok.length===1?'lms_'+ok[0].name.replace(/^lms_/i,''):ZOUT_MULTI;
+  const n=rows.length-1,skipped=zFiles.length-ok.length;
+  let html='<strong>'+n.toLocaleString()+' rows</strong> from <strong>'+ok.length+' file'+(ok.length>1?'s':'')+'</strong>'
+    +(dupes?', <strong>'+dupes.toLocaleString()+'</strong> repeated phone number'+(dupes>1?'s':'')+' removed':'')
+    +(skipped?', '+skipped+' file'+(skipped>1?'s':'')+' skipped':'')+'. Saves as <strong>'+esc2(outName)+'</strong>';
+  const notes=ok.flatMap(f=>(f.rows.notes||[]).map(s=>(ok.length>1?f.name+': ':'')+s));
+  if(notes.length)html+='<br>'+notes.map(esc2).join('<br>')+'.';
+  el.info.innerHTML=html;
+  const t=document.createElement('table'),hd=document.createElement('tr');
+  rows[0].forEach(c=>{const th=document.createElement('th');th.textContent=c;hd.appendChild(th);});t.appendChild(hd);
+  rows.slice(1,4).forEach(r=>{const tr=document.createElement('tr');r.forEach(c=>{const td=document.createElement('td');td.textContent=c;td.title=c;tr.appendChild(td);});t.appendChild(tr);});
+  el.prev.replaceChildren(t);
+  ['info','map','prev','go'].forEach(k=>el[k].hidden=false);
 }
-function handleFile(file){
-  if(!file) return;
-  el.err.hidden=true;
-  const rd=new FileReader();
-  rd.onerror=()=>showError('The file could not be read. Try choosing it again.');
-  rd.onload=()=>{
-    try{
-      const rows=convert(String(rd.result));
-      outRows=rows; outName='lms_'+file.name.replace(/^lms_/i,'');
-      el.title.textContent=file.name; el.sub.textContent='Choose a different file';
-      const n=rows.length-1;
-      el.info.innerHTML='<strong>'+n.toLocaleString()+' rows</strong> converted to <strong>'+rows[0].length+' columns</strong>. Saves as <strong>'+outName.replace(/</g,'&lt;')+'</strong>';
-      if(rows.notes&&rows.notes.length) el.info.innerHTML+='<br>'+rows.notes.map(s=>s.replace(/</g,'&lt;')).join('<br>')+'.';
-      const t=document.createElement('table');
-      const hd=document.createElement('tr');
-      rows[0].forEach(h=>{const th=document.createElement('th');th.textContent=h;hd.appendChild(th)});
-      t.appendChild(hd);
-      rows.slice(1,4).forEach(r=>{const tr=document.createElement('tr');r.forEach(c=>{const td=document.createElement('td');td.textContent=c;td.title=c;tr.appendChild(td)});t.appendChild(tr)});
-      el.prev.replaceChildren(t);
-      ['info','map','prev','go'].forEach(k=>el[k].hidden=false);
-      mood.boost=2.2; // crab gets excited
-    }catch(e){ showError(e.message); }
-  };
-  rd.readAsText(file,'utf-8');
+async function addZoomFiles(list){
+  for(const f of Array.from(list)){
+    if(zFiles.some(x=>x.name===f.name&&x.size===f.size))continue;
+    const rec={name:f.name,size:f.size};
+    try{rec.rows=convert(await f.text());}
+    catch(e){rec.error=e.message;}
+    zFiles.push(rec);
+  }
+  renderZoom();mood.boost=2.2;
 }
-el.file.addEventListener('change',e=>{handleFile(e.target.files[0]);e.target.value='';});
+el.file.addEventListener('change',e=>{addZoomFiles(e.target.files);e.target.value='';});
+el.dd.addEventListener('change',renderZoom);
 ['dragenter','dragover'].forEach(ev=>el.drop.addEventListener(ev,e=>{e.preventDefault();el.drop.classList.add('over')}));
 ['dragleave','drop'].forEach(ev=>el.drop.addEventListener(ev,e=>{e.preventDefault();el.drop.classList.remove('over')}));
-el.drop.addEventListener('drop',e=>handleFile(e.dataTransfer.files[0]));
+el.drop.addEventListener('drop',e=>{e.stopPropagation();addZoomFiles(e.dataTransfer.files);});
 window.addEventListener('dragover',e=>e.preventDefault());
-window.addEventListener('drop',e=>{e.preventDefault(); if(!el.drop.contains(e.target)&&!$('tabZoom').hidden) handleFile(e.dataTransfer.files[0]);});
+window.addEventListener('drop',e=>{e.preventDefault(); if(!$('tabZoom').hidden) addZoomFiles(e.dataTransfer.files);});
 el.go.addEventListener('click',()=>{
   if(!outRows) return;
   const blob=new Blob([toCSV(outRows)],{type:'text/csv;charset=utf-8'});
@@ -228,7 +273,6 @@ el.go.addEventListener('click',()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
   mood.boost=3;
 });
-
 
 /* ================= Payment links: merge many files -> one LMS file ================= */
 const PAY_MAP=[['country_code','CountryCode'],['number_without_country_code','Phone'],['phone_number','Phone'],['video','msg'],['platform','price'],['profession','alter']];
@@ -455,7 +499,7 @@ function drawRock(r){
 
 function drawFrame(){
   ctx.setTransform(DPR,0,0,DPR,0,0);ctx.globalCompositeOperation='source-over';
-  const narrow=W<700;F_=(narrow?W*1.5:Math.min(W,SH)*1.15)*zoom;CX=narrow?W/2:W*.56;CY=narrow?SH*.33:SH*.46;
+  const narrow=W<700;F_=(narrow?W*1.5:Math.min(W,SH)*1.15)*zoom;CX=W/2;CY=narrow?SH*.4:SH*.46;
   const yaw=Math.sin(T*.05)*.05+uYaw;cyw=Math.cos(yaw);syw=Math.sin(yaw);
 
   const bg=ctx.createLinearGradient(0,0,0,SH);bg.addColorStop(0,'#1a8aa6');bg.addColorStop(.38,'#0c5578');bg.addColorStop(.75,'#06304c');bg.addColorStop(1,'#031a2e');
