@@ -109,7 +109,7 @@ th,td{font-size:12.5px;max-width:220px}
     <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
     <code>lead_value</code> from <code>zoomads</code>, <code>oto_non_oto</code> from <code>zoomid</code><br>
     <code>platform</code> from <code>msg2</code>, <code>profession</code> from <code>msg3</code>, <code>amount</code> from <code>amount</code><br>
-    <code>order_id</code> from <code>wsdt</code>, <code>enrolled at</code> from <code>time</code><br>
+    <code>order_id</code> from <code>wsdt</code>, <code>enrolled_at</code> from <code>time</code><br>
     Columns your file does not have are left blank, with no error. If <code>zoomads</code> or <code>zoomid</code> is missing, <code>WN_h81UmFwmQnCoQ-55QxELuQ</code> and <code>997 7254 2342</code> are used.
   </div>
   <div class="prev" id="prev" hidden></div>
@@ -154,7 +154,7 @@ const SPEC=[
   ['profession',['msg3','profession']],
   ['amount',['amount']],
   ['order_id',['wsdt','order_id']],
-  ['enrolled at',['time','enrolled at','enrolled_at']]
+  ['enrolled_at',['time','enrolled_at','enrolled at']]
 ];
 const OUTCOLS=SPEC.map(s=>s[0]);
 let outRows = null, outName = 'lms_output.csv';
