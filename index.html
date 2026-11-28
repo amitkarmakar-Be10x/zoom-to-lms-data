@@ -109,8 +109,7 @@ th,td{font-size:12.5px;max-width:220px}
     <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
     <code>lead_value</code> from <code>zoomads</code>, <code>oto_non_oto</code> from <code>zoomid</code><br>
     <code>platform</code> from <code>msg2</code>, <code>profession</code> from <code>msg3</code>, <code>amount</code> from <code>amount</code><br>
-    <code>order_id</code> from <code>wsdt</code>, <code>enrolled_at</code> from <code>time</code><br>
-    Columns your file does not have are left blank, with no error. If <code>zoomads</code> or <code>zoomid</code> is missing, <code>WN_h81UmFwmQnCoQ-55QxELuQ</code> and <code>997 7254 2342</code> are used.
+    Any column your file does not have is left blank, with no error and no default value.
   </div>
   <div class="prev" id="prev" hidden></div>
   <button class="go" id="go" hidden>Download merged LMS file</button>
@@ -140,7 +139,7 @@ th,td{font-size:12.5px;max-width:220px}
 <script>
 /* ================= CSV -> LMS ================= */
 /* LMS column <- candidate header names in the Zoom file (first one found wins, case-insensitive).
-   Columns the file does not have are left blank; no error. lead_value / oto_non_oto use a fixed value if their columns are absent. */
+   Columns the file does not have are left blank; no error. */
 const SPEC=[
   ['name',['name']],
   ['country_code',['countrycode','country_code']],
@@ -148,13 +147,11 @@ const SPEC=[
   ['phone_number',['phone','phone_number','number_without_country_code']],
   ['email',['emailid','email']],
   ['video',['session','video']],
-  ['lead_value',['zoomads','lead_value'],'WN_h81UmFwmQnCoQ-55QxELuQ'],
-  ['oto_non_oto',['zoomid','oto_non_oto'],'997 7254 2342'],
+  ['lead_value',['zoomads','lead_value']],
+  ['oto_non_oto',['zoomid','oto_non_oto']],
   ['platform',['msg2','platform']],
   ['profession',['msg3','profession']],
-  ['amount',['amount']],
-  ['order_id',['wsdt','order_id']],
-  ['enrolled_at',['time','enrolled_at','enrolled at']]
+  ['amount',['amount']]
 ];
 const OUTCOLS=SPEC.map(s=>s[0]);
 let outRows = null, outName = 'lms_output.csv';
@@ -185,19 +182,18 @@ function convert(text){
   const rows=parseCSV(text);
   if(!rows.length) throw new Error('empty file');
   const head=rows[0].map(x=>x.trim().toLowerCase());
-  const idx=[],blank=[],fixed=[];let found=0;
-  SPEC.forEach(([col,cands,fb])=>{
+  const idx=[],blank=[];let found=0;
+  SPEC.forEach(([col,cands])=>{
     let k=-1;for(const c of cands){k=head.indexOf(c);if(k>=0)break;}
-    if(k>=0){found++;idx.push(k);}
-    else if(fb!==undefined){idx.push(-1);fixed.push(col+' = '+fb);}
-    else{idx.push(-2);blank.push(col);}
+    if(k>=0)found++;
+    else if(cands.length)blank.push(col);
+    idx.push(k);
   });
   if(!found) throw new Error('no matching columns');
   const out=[OUTCOLS.slice()];
-  for(let r=1;r<rows.length;r++){const row=rows[r];out.push(idx.map((k,n)=>k>=0?(row[k]??''):k===-1?SPEC[n][2]:''));}
+  for(let r=1;r<rows.length;r++){const row=rows[r];out.push(idx.map(k=>k>=0?(row[k]??''):''));}
   out.notes=[];
   if(blank.length) out.notes.push('Not in your file, left blank: '+blank.join(', '));
-  if(fixed.length) out.notes.push('Not in your file, filled with fixed value: '+fixed.join(', '));
   return out;
 }
 
