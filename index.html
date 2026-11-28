@@ -109,7 +109,7 @@ th,td{font-size:12.5px;max-width:220px}
     <code>email</code> from <code>emailid</code>, <code>video</code> from <code>session</code><br>
     <code>lead_value</code> from <code>zoomads</code>, <code>oto_non_oto</code> from <code>zoomid</code><br>
     <code>platform</code> from <code>msg2</code>, <code>profession</code> from <code>msg3</code>, <code>amount</code> from <code>amount</code><br>
-    Any column your file does not have is left blank, with no error and no default value.
+    Any column your file does not have is simply not added to the output. No error, no blank column, no default value.
   </div>
   <div class="prev" id="prev" hidden></div>
   <button class="go" id="go" hidden>Download merged LMS file</button>
@@ -182,18 +182,17 @@ function convert(text){
   const rows=parseCSV(text);
   if(!rows.length) throw new Error('empty file');
   const head=rows[0].map(x=>x.trim().toLowerCase());
-  const idx=[],blank=[];let found=0;
+  const idx=[],left=[];let found=0;
   SPEC.forEach(([col,cands])=>{
     let k=-1;for(const c of cands){k=head.indexOf(c);if(k>=0)break;}
-    if(k>=0)found++;
-    else if(cands.length)blank.push(col);
+    if(k>=0)found++;else left.push(col);
     idx.push(k);
   });
   if(!found) throw new Error('no matching columns');
   const out=[OUTCOLS.slice()];
   for(let r=1;r<rows.length;r++){const row=rows[r];out.push(idx.map(k=>k>=0?(row[k]??''):''));}
-  out.notes=[];
-  if(blank.length) out.notes.push('Not in your file, left blank: '+blank.join(', '));
+  out.present=idx.map(k=>k>=0);
+  out.notes=left.length?['Not in your file, left out of the output: '+left.join(', ')]:[];
   return out;
 }
 
@@ -202,12 +201,14 @@ function toCSV(rows){ return rows.map(r=>r.map(esc).join(',')).join('\r\n')+'\r\
 const $=id=>document.getElementById(id);
 const ZOUT_MULTI='lms_Zoom_merged.csv';
 function buildZoom(files,dedupe){
-  const PI=OUTCOLS.indexOf('phone_number'),out=[OUTCOLS.slice()],seen=new Set();let dupes=0;
-  for(const f of files){ if(!f.rows)continue;
+  const ok=files.filter(f=>f.rows);
+  const keep=OUTCOLS.map((_,c)=>c).filter(c=>ok.some(f=>f.rows.present[c]));
+  const PI=OUTCOLS.indexOf('phone_number'),out=[keep.map(c=>OUTCOLS[c])],seen=new Set();let dupes=0;
+  for(const f of ok){
     for(let r=1;r<f.rows.length;r++){
       const row=f.rows[r];
       if(dedupe){const k=row[PI].trim();if(k){if(seen.has(k)){dupes++;continue;}seen.add(k);}}
-      out.push(row);
+      out.push(keep.map(c=>row[c]));
     }}
   return {rows:out,dupes};
 }
